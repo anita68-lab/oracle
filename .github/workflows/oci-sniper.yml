@@ -58,6 +58,27 @@ jobs:
           SHAPES: "2:12 1:6"   # спершу 2 OCPU/12 GB, потім 1 OCPU/6 GB
         run: bash scripts/launch.sh
 
+      - name: Hour key
+        id: hour
+        if: steps.launch.outputs.stop != 'true'
+        run: echo "key=heartbeat-$(date -u +%Y%m%d%H)" >> "$GITHUB_OUTPUT"
+
+      - name: Check if hourly report already sent
+        id: hb
+        if: steps.launch.outputs.stop != 'true'
+        uses: actions/cache@v4
+        with:
+          path: .heartbeat
+          key: ${{ steps.hour.outputs.key }}
+
+      - name: Hourly Telegram report
+        if: steps.launch.outputs.stop != 'true' && steps.hb.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: bash scripts/heartbeat.sh
+
       - name: Disable workflow after success
         if: always() && steps.launch.outputs.stop == 'true'
         env:
