@@ -12,9 +12,9 @@ set -uo pipefail
 
 COMPARTMENT_ID="${COMPARTMENT_ID:-$OCI_TENANCY_OCID}"
 INSTANCE_NAME="${INSTANCE_NAME:-my-server}"
-OCPUS="${OCPUS:-1}"
-MEMORY_GB="${MEMORY_GB:-6}"
-ATTEMPTS="${ATTEMPTS:-4}"   # спроб за один запуск workflow
+# Розміри по черзі "OCPU:GB": спершу великий, якщо немає місця — менший.
+SHAPES="${SHAPES:-2:12 1:6}"
+ATTEMPTS="${ATTEMPTS:-8}"   # спроб за один запуск workflow
 WAIT="${WAIT:-60}"          # секунд між спробами
 
 OUT_FILE="${GITHUB_OUTPUT:-/dev/null}"
@@ -40,9 +40,9 @@ if [ "${EXISTING:-0}" -gt 0 ]; then
 fi
 
 # 2. Спроби створення.
-for i in $(seq 1 "$ATTEMPTS"); do
-  echo "[$(date -u '+%H:%M:%S')] Спроба $i/$ATTEMPTS..."
-  OUT=$(oci compute instance launch \
+try_launch() {  # $1=OCPU $2=GB; 0 = створено, 1 = немає місця, 2 = стоп
+  local OCPUS="$1" MEMORY_GB="$2" OUT ERR INSTANCE_ID IP
+  OUT=$(oci --no-retry compute instance launch \
     --compartment-id "$COMPARTMENT_ID" \
     --availability-domain "$AVAILABILITY_DOMAIN" \
     --shape VM.Standard.A1.Flex \
@@ -53,7 +53,7 @@ for i in $(seq 1 "$ATTEMPTS"); do
     --display-name "$INSTANCE_NAME" 2>/tmp/launch_err)
 
   if [ $? -eq 0 ]; then
-    echo "Сервер створено!"
+    echo "  ${OCPUS}/${MEMORY_GB}: сервер створено!"
     INSTANCE_ID=$(echo "$OUT" | jq -r '.data.id')
     oci compute instance get --instance-id "$INSTANCE_ID" \
       --wait-for-state RUNNING --max-wait-seconds 600 >/dev/null 2>&1
@@ -66,24 +66,31 @@ Public IP: $IP
 
 Workflow автоматично вимкнено."
     stop_workflow
-    exit 0
+    return 0
   fi
 
   ERR=$(cat /tmp/launch_err)
   case "$ERR" in
     *"Out of host capacity"*|*"Out of capacity"*|*"InternalError"*)
-      echo "  Немає місця." ;;
+      echo "  ${OCPUS}/${MEMORY_GB}: немає місця."
+      return 1 ;;
     *"TooManyRequests"*)
       echo "  Забагато запитів — завершую цей запуск."
       exit 0 ;;
     *)
-      echo "  Невідома помилка (деталі надіслано в Telegram)."
+      echo "  ${OCPUS}/${MEMORY_GB}: невідома помилка (деталі надіслано в Telegram)."
       tg "❌ Oracle sniper: невідома помилка, workflow вимкнено.
 ${ERR:0:800}"
       stop_workflow
       exit 1 ;;
   esac
+}
 
+for i in $(seq 1 "$ATTEMPTS"); do
+  echo "[$(date -u '+%H:%M:%S')] Спроба $i/$ATTEMPTS..."
+  for S in $SHAPES; do
+    try_launch "${S%%:*}" "${S##*:}" && exit 0
+  done
   [ "$i" -lt "$ATTEMPTS" ] && sleep "$WAIT"
 done
 
