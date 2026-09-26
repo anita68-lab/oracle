@@ -2,7 +2,7 @@ name: OCI Instance Sniper
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # кожні 5 хв (GitHub може запускати з затримкою)
+    - cron: "*/10 * * * *"   # кожні 5 хв (GitHub може запускати з затримкою)
   workflow_dispatch:         # ручний запуск кнопкою "Run workflow"
 
 permissions:
