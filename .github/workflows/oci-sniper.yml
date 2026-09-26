@@ -1,0 +1,66 @@
+name: OCI Instance Sniper
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # кожні 5 хв (GitHub може запускати з затримкою)
+  workflow_dispatch:         # ручний запуск кнопкою "Run workflow"
+
+permissions:
+  contents: read
+  actions: write             # щоб вимкнути workflow після успіху
+
+concurrency:
+  group: oci-sniper
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OCI CLI
+        run: pip install --quiet oci-cli
+
+      - name: Configure OCI
+        env:
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.oci
+          printf '%s\n' "$OCI_PRIVATE_KEY" > ~/.oci/key.pem
+          chmod 600 ~/.oci/key.pem
+          cat > ~/.oci/config <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/key.pem
+          EOF
+          chmod 600 ~/.oci/config
+
+      - name: Try to launch instance
+        id: launch
+        env:
+          OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          BOOT_VOLUME_ID: ${{ secrets.BOOT_VOLUME_ID }}
+          SUBNET_ID: ${{ secrets.SUBNET_ID }}
+          AVAILABILITY_DOMAIN: ${{ secrets.AVAILABILITY_DOMAIN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          INSTANCE_NAME: my-server
+          OCPUS: "1"
+          MEMORY_GB: "6"
+        run: bash scripts/launch.sh
+
+      - name: Disable workflow after success
+        if: always() && steps.launch.outputs.stop == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/oci-sniper.yml/disable"
