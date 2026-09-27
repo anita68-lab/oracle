@@ -2,8 +2,8 @@ name: OCI Instance Sniper
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # кожні 5 хв (GitHub може запускати з затримкою)
-  workflow_dispatch:         # ручний запуск кнопкою "Run workflow"
+    - cron: "*/10 * * * *"   # запасний варіант: перезапускає ланцюжок, якщо він обірвався
+  workflow_dispatch:         # ручний запуск + самоперезапуск (див. останній крок)
 
 permissions:
   contents: read
@@ -84,3 +84,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/oci-sniper.yml/disable"
+
+
+      # Самоперезапуск: наступний запуск стає в чергу (concurrency) і стартує
+      # одразу після цього. Лише якщо все пройшло успішно і сервер ще не створено.
+      # Зупинити ланцюжок: Actions → OCI Instance Sniper → ⋯ → Disable workflow.
+      - name: Queue next run
+        if: success() && steps.launch.outputs.stop != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${{ github.repository }}/actions/workflows/oci-sniper.yml/dispatches" -f ref=main
